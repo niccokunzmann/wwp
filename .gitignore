@@ -36,5 +36,5 @@ nosetests.xml
 
 # test directory
 
-/tmp
+/test1/tmp
 

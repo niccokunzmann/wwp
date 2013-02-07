@@ -11,57 +11,6 @@ def sign_code(code, private_key):
 def is_signed(signed_code, public_key):
     pass
 
-class KeyModule(object):
-
-    def __init__(self, keyRoot):
-        self._keyRoot = keyRoot
-        self._modules = {}
-
-    def __setattr__(self, name, value):
-        if name.startswith('_'):
-            return object.__setattr__(self, name, value)
-        module = self._keyRoot.get_module_for_key(value, name)
-        if getattr(self, name, module) is not module:
-            raise AttributeError('You tried to assign %r again. '\
-                                 'I only accept the first - for clarity.'\
-                                 'Excuse me.' % name)
-        self._modules[name] = module
-
-    def __getattribute__(self, name):
-        if name.startswith('_'):
-            return object.__getattribute__(self, name)
-        notFound = []
-        subModule = self._keyRoot.get(name, notFound)
-        if subModule is notFound:
-            raise AttributeError('I could not find a submudule named {0}.'\
-                                 'Assign a key to {0} to get the '\
-                                 'corresponding module.'.format(name))
-        return subModule
-
-
-import types
-
-class KeyRoot:
-    def __init__(self):
-        self.key_to_module = {}
-
-    def as_module(self):
-        return KeyModule(self)
-
-    def get_module_for_key(self, key, name = None):
-        # assume key to string is bijective
-        #   can use key if two keys with same string are equal
-        index = key.exportKey()
-        if name is None:
-            name = index
-        module = self.get(index, None)
-        if module is None:
-            module = types.ModuleType(name)
-            self.key_to_module[index] = module
-            module.__key__ = key
-        return module
-
-import inspect
 
 def splitStringByLength(string, length):
     return [string[length * index: length * index + length]
@@ -114,7 +63,6 @@ class _BaseHashTable(object):
                     break
             else:
                 results.append(value_hash)
-        print(results)
         return results
 
 from functools import partial
@@ -139,18 +87,22 @@ class HashTable(_BaseHashTable):
             return self._get(hash)
         hashes = map(lambda source: (None if source is None else self.hash(source)), sources)
         found_hashes = self._find(*hashes)
-        print('found', found_hashes)
         result_hashes = list(map(lambda h: splitStringByLength(self._get(h), len(h)),
                             found_hashes))
-        print('result_hashes', result_hashes)
         return list(map(list, map(partial(map, self._get), result_hashes)))
 
     @staticmethod
     def make_source(source):
         if hasattr(source, 'encode'):
             source = source.encode('utf8')
-        assert type(source) is bytes
+        assert type(source) is bytes, 'Expected bytes, got %r' % source
         return source
+
+    def print(self):
+        for x, y in self.hash_to_object.items():
+            print(x)
+            print(y)
+            print()
 
 
 h = HashTable()
@@ -163,23 +115,191 @@ h.store('hello', 'world')
 assert [b'hello', b'world'] in h.find('hello', None), h.find('hello', None)
 assert [b'hello', b'world'] in h.find(None, 'world'), h.find(None, 'world')
 
+import types
+
+def hashToSignatureBytes(hash, private_key):
+    signature = str(private_key.sign(hash, '')[0]).encode('utf8')
+    assert signature.isdigit(), 'The signature is expected to be a number'\
+                                ', not %r' % signature
+    return signature
+
+def verifyHashSignatureBytes(hash, signature, public_key):
+    assert signature.isdigit(), 'The signature is expected to be a number'\
+                                ', not %r' % signature
+    signature = (int(signature),)
+    return public_key.verify(hash, signature)
+
+
+import Crypto.PublicKey.RSA
+
+private_key = Crypto.PublicKey.RSA.importKey(b'-----BEGIN RSA PRIVATE KEY-----\nMIICXAIBAAKBgQCsDtPjibKg0LjJBwo4O7Ea6zZIJUvVXsA+i2gl+IHuDRRjpuDs\n+7Tx1W404Mw8gj5I0xRwwHBFbHxvkV5EbZcLHB4SMg2SVe7nvxVOoenfEPQ44aJ2\nUimR66Oak2zoHdJEYeGSyF1rXDLwDkrTP0GbC7fJ7mpmUkirLaKEym0d1wIDAQAB\nAoGAaDSiyBBBi3xeLgKBggVFAlSqj49nGldEf5zW+whDSPXK/3+2glEACeeF06jC\niXMoXdrZamBinulRhBC60x68dxLPxq1U8cNSsHSWy9ZM9JoETwUzH2W69dkpU6XI\n1B3dekYbFXnOqJM7TE0X5IwLuyEM/1U0j/wl/JzigpFq3iECQQC/qcZx0GyvHoQ6\ns2DyLXzNyqknY5strxt1eIx36yTiyTE8YnSEgpbu+l2DRuse8f9DrmI8i/fnGk3c\n/ZRUyjIzAkEA5dBPYaM8+MyZBzZaDzzD1ufEqBhi6lAhP3ReoXnoVmXEuKSvCpS4\nMNPBG2i3oAnNfYeIPQ2imtGJO0nmPmRpzQJAKT3I+7iTimMQpOjwVWxATK/tEhK2\n02+4guB7qVopx7rvI0U0OUc4Xxf0g0kBUtlTyiZ98PVVVJ8uXf0aq9wOTQJBAIdy\naPbg4PS6kY7Ap//HDp3A6BUymkoDhDUD/yoo0ZjqTjGNTmVsFcshYvUmmONII8bS\ndKeXO7kHulwpR/yJ7hkCQBgMbXfk1uviwfHyjcZM3iSZe4AzJlPCxurE6t5DInkx\notvCO4ws1C2Rak1IEsbqU6LxUBe+hdpjNsAXTkyVw3k=\n-----END RSA PRIVATE KEY-----')
+public_key = private_key.publickey()
+
+signature = hashToSignatureBytes(b'12345', private_key)
+assert verifyHashSignatureBytes(b'12345', signature, public_key)
+
+class SubModuleLoader:
+    def __init__(self, module):
+        self.module = module
+        self.hash_table = module._hash_table
+
+    def get_source(self, name):
+        return self.hash_table.find(name).decode('utf8')
+
+
+class SubModule(types.ModuleType):
+
+    hashToSignatureBytes = staticmethod(hashToSignatureBytes)
+
+    def __init__(self, name, key, hash_table):
+        types.ModuleType.__init__(self, name)
+        self._hash_table = hash_table
+        self.__key__ = key
+        self.__exported_key__ = key.exportKey()
+        self.require = self.require
+        self.signed = self.signed
+        self.__loader__ = SubModuleLoader(self)
+
+    def signed(self, obj):
+        # todo
+        return obj
+
+    def __getattribute__(self, name):
+        if name.startswith('_') or name in self.__dict__ or \
+           name in ('require', 'signed', 'execute'):
+            return types.ModuleType.__getattribute__(self, name)
+        self.require(name)
+        return getattr(self, name)
+
+    def require(self, name):
+        attacker = []
+        # now save: public_key, signature, source, name
+        query = self.__exported_key__, None, None, name.encode('utf8')
+        results = self._hash_table.find(*query)
+        for public_key, signature, source, name in results:
+            assert self.__exported_key__ == public_key, "%r == %r" % \
+                   (self.__exported_key__, public_key)
+            hash = self._hash_table.store(source, name)
+            if verifyHashSignatureBytes(hash, signature, self.__key__):
+                return self.execute(source, name)
+            else:
+                attacker_string = 'Someone tried to attack %r of %s '\
+                                  'with source \n%s' % \
+                                  (name, public_key, source)
+                attacker.append(attacker_string)
+                print(attacker_string)
+        raise AttributeError('Could not find attribute %r in the tables. ' % name + \
+                             "\n".join(attacker))
+
+    def execute(self, source, name):
+        name = name.decode('utf8')
+        source = source.decode('utf8')
+        source_hash = self._hash_table.store(source)
+        source_code = compile(source, source_hash, 'exec')
+        exec(source_code, self.__dict__)
+        return self.__dict__[name]
+
+class KeyModule(object):
+
+    def __init__(self, keyRoot):
+        self._keyRoot = keyRoot
+        self._modules = {}
+
+    def __setattr__(self, name, value):
+        if name.startswith('_'):
+            return object.__setattr__(self, name, value)
+        module = self._keyRoot.getModuleForKey(value, name)
+        if getattr(self, name, module) is not module:
+            raise AttributeError('You tried to assign %r again. '\
+                                 'I only accept the first - for clarity.'\
+                                 'Excuse me.' % name)
+        self._modules[name] = module
+
+    def __getattribute__(self, name):
+        if name.startswith('_'):
+            return object.__getattribute__(self, name)
+        notFound = []
+        subModule = self._modules.get(name, notFound)
+        if subModule is notFound:
+            raise AttributeError('I could not find a submudule named {0}.'\
+                                 'Assign a key to {0} to get the '\
+                                 'corresponding module.'.format(name))
+        return subModule
+
+
+class KeyRoot:
+
+    newSubModule = SubModule
+    
+    def __init__(self, hash_table):
+        self.key_to_module = {}
+        self.hash_table = hash_table
+
+    def asModule(self):
+        return KeyModule(self)
+
+    def getModuleForKey(self, key, name = None):
+        # assume key to string is bijective
+        #   can use key if two keys with same string are equal
+        index = key.exportKey()
+        if name is None:
+            name = index
+        module = self.key_to_module.get(index, None)
+        if module is None:
+            module = self.newSubModule(name, key, self.hash_table)
+            self.key_to_module[index] = module
+        return module
+
+h = HashTable()
+
+k = KeyRoot(h)
+m = k.asModule()
+m.a = public_key
+assert m.a.__name__ == 'a', m.a.__name__
+assert m.a.__key__ == public_key, m.a.__key__
+assert m.a == m.a
+
+import inspect
+
 
 class Signer:
     
     def __init__(self, private_keys, hash_table):
-        self.private_keys = private_keys
+        self.private_keys = [(  private_key,
+                                private_key.publickey().exportKey())
+                             for private_key in private_keys]
         self.hash_table = hash_table
 
-    def getSource(self, object):
-        return inspect.getsource(object)
+    def getSource(self, obj):
+        return inspect.getsource(obj)
         
-    def __call__(self, object):
-        source = self.getSource(object)
-        source_hash = self.hash_table.store(source)
-        hashes = [private_key.sign(source_hash, '') \
-                  for private_key in self.private_keys]
-        
+    hashToSignatureBytes = staticmethod(hashToSignatureBytes)
 
+    def __call__(self, obj):
+        source = self.getSource(obj)
+        name = obj.__name__
+        self.store_source_with_name(source.encode('utf8'), name.encode('utf8'))
+        return obj
+
+    def store_source_with_name(self, source, name):
+        for private_key, public_key in self.private_keys:
+            # now save: source, name
+            hash = self.hash_table.store(source, name)
+            signature = self.hashToSignatureBytes(hash, private_key)
+            # now save: public_key, signature, source, name
+            # TODO: make secure
+            self.hash_table.store(public_key, signature, source, name)
+
+        
+signed = Signer([private_key], h)
+s2 = Signer([], h)
+
+@signed
+def f():
+    print('in f')
+    return '123'
+
+assert m.a.f() == '123', m.a.f()
 
 from pickle import loads, dumps
 

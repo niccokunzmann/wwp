@@ -34,6 +34,9 @@ class _BaseHashTable(object):
     def __init__(self):
         self.hash_to_object = {}
 
+    def _includes(self, hash):
+        return hash in self.hash_to_object
+
     def _store(self, source):
         'store one object and return the hash'
         hash = self.hash(source)
@@ -65,9 +68,46 @@ class _BaseHashTable(object):
                 results.append(value_hash)
         return results
 
+import os
+import base64
+
+class FileCachingHashTable(_BaseHashTable):
+
+    directory = b'./table/'
+
+    if not os.path.isdir(directory):
+        os.mkdir(directory)
+
+    def _getFilePath(self, hash):
+        assert type(hash) is bytes, hash
+        return os.path.join(self.directory, base64.b16encode(hash))
+    
+    def _store(self, source):
+        # todo: faster
+        hash = _BaseHashTable._store(self, source)
+        path =  self._getFilePath(hash)
+        if not os.path.isfile(path):
+            open(path, 'wb').write(source)
+        return hash
+
+    def _get(self, hash):
+        try:
+            return _BaseHashTable._get(self, hash)
+        except KeyError:
+            path = self._getFilePath(hash)
+            if os.path.isfile(path):
+                _BaseHashTable._store(self, open(path, 'rb').read())
+            return _BaseHashTable._get(self, hash)
+
+    # official interface
+
+    def getFile(self, source):
+        return os.path.join(self._getFilePath(self._store(source)))
+
+
 from functools import partial
 
-class HashTable(_BaseHashTable):
+class HashTable(FileCachingHashTable):
     '''enhances the interface for objects'''
 
     def store(self, *sources):
@@ -83,8 +123,7 @@ class HashTable(_BaseHashTable):
         sources = list(map(lambda source: (None if source is None
                                            else self.make_source(source)),
                            sources))
-        if len(sources) == 1:
-            return self._get(hash)
+        if len(sources) == 1: return self._get(sources[0])
         hashes = map(lambda source: (None if source is None else self.hash(source)), sources)
         found_hashes = self._find(*hashes)
         result_hashes = list(map(lambda h: splitStringByLength(self._get(h), len(h)),
@@ -104,12 +143,14 @@ class HashTable(_BaseHashTable):
             print(y)
             print()
 
+    def getFile(self, source):
+        return FileCachingHashTable.getFile(self, self.make_source(source))
 
 h = HashTable()
 
 assert h.store('1234') == h.store('1234')
 hash = h.store(b'12345')
-assert h.find(hash) == b'12345'
+assert h.find(hash) == b'12345', h.find(hash)
 
 h.store('hello', 'world')
 assert [b'hello', b'world'] in h.find('hello', None), h.find('hello', None)
@@ -138,15 +179,6 @@ public_key = private_key.publickey()
 signature = hashToSignatureBytes(b'12345', private_key)
 assert verifyHashSignatureBytes(b'12345', signature, public_key)
 
-class SubModuleLoader:
-    def __init__(self, module):
-        self.module = module
-        self.hash_table = module._hash_table
-
-    def get_source(self, name):
-        return self.hash_table.find(name).decode('utf8')
-
-
 class SubModule(types.ModuleType):
 
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
@@ -158,7 +190,6 @@ class SubModule(types.ModuleType):
         self.__exported_key__ = key.exportKey()
         self.require = self.require
         self.signed = self.signed
-        self.__loader__ = SubModuleLoader(self)
 
     def signed(self, obj):
         # todo
@@ -194,8 +225,8 @@ class SubModule(types.ModuleType):
     def execute(self, source, name):
         name = name.decode('utf8')
         source = source.decode('utf8')
-        source_hash = self._hash_table.store(source)
-        source_code = compile(source, source_hash, 'exec')
+        source_file = self._hash_table.getFile(source)
+        source_code = compile(source, source_file, 'exec')
         exec(source_code, self.__dict__)
         return self.__dict__[name]
 
@@ -296,10 +327,27 @@ s2 = Signer([], h)
 
 @signed
 def f():
-    print('in f')
     return '123'
 
 assert m.a.f() == '123', m.a.f()
+
+
+@signed
+def g():
+    raise ValueError('')
+
+try:
+    m.a.g()
+except ValueError:
+    import traceback
+    import io
+    s = io.StringIO()
+    traceback.print_exc(file = s)
+    s = s.getvalue()
+    assert "raise ValueError('')" in s, s
+else:
+    assert False, 'There should be an error'
+
 
 from pickle import loads, dumps
 

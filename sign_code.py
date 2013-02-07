@@ -1,11 +1,11 @@
 
 
-def sign_code(code, private_key)
+def sign_code(code, private_key):
     if hasattr(code, 'encode'):
         code = code.encode('utf8')
     assert type(code) is bytes, 'can only sign bytes'
     assert private_key.can_sign(), 'the key must be able to sign the code'
-    (,signature) = private_key.sign()
+    (signature,) = private_key.sign()
     return code + ''
     
 def is_signed(signed_code, public_key):
@@ -63,21 +63,30 @@ class KeyRoot:
 
 import inspect
 
+def splitStringByLength(string, length):
+    return [string[length * index: length * index + length]
+            for index in range((len(string) - 1) // length + 1)]
+
+assert splitStringByLength('12345', 1) == list('12345')
+assert splitStringByLength('12345', 2) == ['12', '34', '5']
+assert splitStringByLength('12345', 3) == ['123', '45']
+assert splitStringByLength('12345', 4) == ['1234', '5']
+assert splitStringByLength('12345', 5) == ['12345']
+assert splitStringByLength('12345', 6) == ['12345']
+
 class _BaseHashTable(object):
     '''provides the basic functionality of a hash table'''
     
     from Crypto.Hash import SHA256
 
     def hash(self, source):
-        source = make_source(source)
-        return self.SHA256.new(source).digest()
+        return self.SHA256.new(source).hexdigest()[:5].encode('ascii')
 
     def __init__(self):
         self.hash_to_object = {}
 
-    def _store(self, source, *sources):
+    def _store(self, source):
         'store one object and return the hash'
-        source = self.make_source(source)
         hash = self.hash(source)
         self.hash_to_object[hash] = source
         return hash
@@ -95,14 +104,20 @@ class _BaseHashTable(object):
         if length is None:
             raise ValueError('I need at least one hash to look for')
         results = []
-        for value_hash, value in self.hash_to_object.itmes():
-            for index, hash in enumerate(hashes):
-                if hash is not None and \
-                    value[index * length:index * length + length] != hash:
+        for value_hash, value in self.hash_to_object.items():
+            if len(value) // length != len(hashes):
+                # fix issue that get(hashes[0]) is included
+                continue
+            for hash1, hash2 in zip(splitStringByLength(value, length), hashes):
+                if hash2 is not None and \
+                    hash1 != hash2:
                     break
             else:
                 results.append(value_hash)
+        print(results)
         return results
+
+from functools import partial
 
 class HashTable(_BaseHashTable):
     '''enhances the interface for objects'''
@@ -110,25 +125,43 @@ class HashTable(_BaseHashTable):
     def store(self, *sources):
         assert len(sources) > 0
         sources = map(self.make_source, sources)
-        hashes = map(self._store, sources)
+        hashes = list(map(self._store, sources))
         if len(hashes) == 1:
             return hashes[0]
         return self.store(b''.join(hashes))   
 
     def find(self, *sources):
         assert len(sources) > 0
-        sources = map(self.make_source, sources)
+        sources = list(map(lambda source: (None if source is None
+                                           else self.make_source(source)),
+                           sources))
         if len(sources) == 1:
             return self._get(hash)
-        hashes = map(lambda source: (None if source is None else self.hash(source)))
-        return map(self.get, self.find_hashes(*hashes))
+        hashes = map(lambda source: (None if source is None else self.hash(source)), sources)
+        found_hashes = self._find(*hashes)
+        print('found', found_hashes)
+        result_hashes = list(map(lambda h: splitStringByLength(self._get(h), len(h)),
+                            found_hashes))
+        print('result_hashes', result_hashes)
+        return list(map(list, map(partial(map, self._get), result_hashes)))
 
     @staticmethod
-    def make_source(source)
+    def make_source(source):
         if hasattr(source, 'encode'):
             source = source.encode('utf8')
         assert type(source) is bytes
         return source
+
+
+h = HashTable()
+
+assert h.store('1234') == h.store('1234')
+hash = h.store(b'12345')
+assert h.find(hash) == b'12345'
+
+h.store('hello', 'world')
+assert [b'hello', b'world'] in h.find('hello', None), h.find('hello', None)
+assert [b'hello', b'world'] in h.find(None, 'world'), h.find(None, 'world')
 
 
 class Signer:

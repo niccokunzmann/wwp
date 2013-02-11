@@ -203,6 +203,7 @@ class SubModule(types.ModuleType):
         self.signed = self.signed
 
     def signed(self, obj):
+        '''this is kind of an assertion'''
         local_source = inspect.getsource(obj)
         if local_source == '':
             raise ValueError('could not find source of %r' % obj)
@@ -376,9 +377,3 @@ else:
 
 
 from pickle import loads, dumps
-
-
-
-
-
-        

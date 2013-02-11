@@ -179,6 +179,17 @@ public_key = private_key.publickey()
 signature = hashToSignatureBytes(b'12345', private_key)
 assert verifyHashSignatureBytes(b'12345', signature, public_key)
 
+import inspect
+
+class SecurityException(Exception):
+    pass
+
+class VerificationException(SecurityException):
+    pass
+
+class SourceCodeVerificationException(VerificationException):
+    pass
+
 class SubModule(types.ModuleType):
 
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
@@ -192,17 +203,25 @@ class SubModule(types.ModuleType):
         self.signed = self.signed
 
     def signed(self, obj):
-        # todo
-        return obj
+        local_source = inspect.getsource(obj)
+        if local_source == '':
+            raise ValueError('could not find source of %r' % obj)
+        name = obj.__name__
+        for source, name in self.yieldVerifiedSourcesOfName(name):
+            if source == local_source:
+                return obj
+        raise SourceCodeVerificationException('Source of %r is not trusted' % \
+                                              obj)
 
     def __getattribute__(self, name):
         if name.startswith('_') or name in self.__dict__ or \
-           name in ('require', 'signed', 'execute'):
+           name in ('require', 'signed', 'execute', '__dict__', 
+                    'yieldVerifiedSourcesOfName'):
             return types.ModuleType.__getattribute__(self, name)
         self.require(name)
         return getattr(self, name)
 
-    def require(self, name):
+    def yieldVerifiedSourcesOfName(self, name):
         attacker = []
         # now save: public_key, signature, source, name
         query = self.__exported_key__, None, None, name.encode('utf8')
@@ -212,7 +231,7 @@ class SubModule(types.ModuleType):
                    (self.__exported_key__, public_key)
             hash = self._hash_table.store(source, name)
             if verifyHashSignatureBytes(hash, signature, self.__key__):
-                return self.execute(source, name)
+                yield source.decode('utf8'), name.decode('utf8')
             else:
                 attacker_string = 'Someone tried to attack %r of %s '\
                                   'with source \n%s' % \
@@ -221,10 +240,17 @@ class SubModule(types.ModuleType):
                 print(attacker_string)
         raise AttributeError('Could not find attribute %r in the tables. ' % name + \
                              "\n".join(attacker))
+        
+
+    def require(self, name, reload = False):
+        if not reload and name in self.__dict__:
+            return getattr(self, name)
+        for source, name in self.yieldVerifiedSourcesOfName(name):
+            return self.execute(source, name)
 
     def execute(self, source, name):
-        name = name.decode('utf8')
-        source = source.decode('utf8')
+        assert type(source) is str
+        assert type(name) is str
         source_file = self._hash_table.getFile(source)
         source_code = compile(source, source_file, 'exec')
         exec(source_code, self.__dict__)

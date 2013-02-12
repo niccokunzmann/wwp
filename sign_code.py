@@ -179,27 +179,49 @@ public_key = private_key.publickey()
 signature = hashToSignatureBytes(b'12345', private_key)
 assert verifyHashSignatureBytes(b'12345', signature, public_key)
 
-class SubModuleDict(dict):
+
+from collections.abc import MutableMapping
+
+class SubModuleDict(MutableMapping, dict):
+
+    __slots__ = ('sub_module',)
 
     def __init__(self, sub_module):
-        dict.__init__(self)
         self.sub_module = sub_module
-        
 
+    def __contains__(self, name):
+        return hasattr(self.sub_module, name)
+        
     def __getitem__(self, name):
-        try:
-            return dict.__getitem__(self, name, value)
-        except KeyError:
-            self.sub_module.require(name)
-            return self[name]
+        return getattr(self.sub_module, name)
+
+    def __setitem__(self, name, value):
+        return setattr(self.sub_module, name, value)
+
+    def __delitem__(self, name):
+        return delattr(self.sub_module, name)
+
+    def __len__(self):
+        return len(dir(self.sub_module))
+
+    def __iter__(self):
+        return iter(dir(self.sub_module))
+
+import inspect
+
+class SecurityException(Exception):
+    pass
+
+class VerificationException(SecurityException):
+    pass
+
+class SourceCodeVerificationException(VerificationException):
+    pass
+
 
 class SubModule(types.ModuleType):
 
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
-
-    @property
-    def __dict__(self):
-        return self.__dict
 
     def __init__(self, name, key, hash_table):
         self.__dict = SubModuleDict(self)
@@ -210,18 +232,32 @@ class SubModule(types.ModuleType):
         self.require = self.require
         self.signed = self.signed
 
+    @property
+    def asDict(self):
+        return self.__dict
+
     def signed(self, obj):
-        # todo
-        return obj
+        '''this is kind of an assertion'''
+        local_source = inspect.getsource(obj)
+        if local_source == '':
+            raise ValueError('could not find source of %r' % obj)
+        name = obj.__name__
+        for source, name in self.yieldVerifiedSourcesOfName(name):
+            if source == local_source:
+                return obj
+        raise SourceCodeVerificationException('Source of %r is not trusted' % \
+                                              obj)
+
 
     def __getattribute__(self, name):
-        if name.startswith('_'):
+        if name.startswith('_') or name in self.__dict__ or \
+           name in ('require', 'signed', 'execute',  
+                    'yieldVerifiedSourcesOfName', 'asDict'):
             return types.ModuleType.__getattribute__(self, name)
-        if name in self.__dict__:
-            return self.__dict__[name]
-        raise AttributeError('%r has no attribute %r' % (self, name))
+        self.require(name)
+        return getattr(self, name)
 
-    def require(self, name):
+    def yieldVerifiedSourcesOfName(self, name):
         attacker = []
         # now save: public_key, signature, source, name
         query = self.__exported_key__, None, None, name.encode('utf8')
@@ -231,7 +267,7 @@ class SubModule(types.ModuleType):
                    (self.__exported_key__, public_key)
             hash = self._hash_table.store(source, name)
             if verifyHashSignatureBytes(hash, signature, self.__key__):
-                return self.execute(source, name)
+                yield source.decode('utf8'), name.decode('utf8')
             else:
                 attacker_string = 'Someone tried to attack %r of %s '\
                                   'with source \n%s' % \
@@ -240,13 +276,20 @@ class SubModule(types.ModuleType):
                 print(attacker_string)
         raise AttributeError('Could not find attribute %r in the tables. ' % name + \
                              "\n".join(attacker))
+        
+
+    def require(self, name, reload = False):
+        if not reload and name in self.__dict__:
+            return getattr(self, name)
+        for source, name in self.yieldVerifiedSourcesOfName(name):
+            return self.execute(source, name)
 
     def execute(self, source, name):
-        name = name.decode('utf8')
-        source = source.decode('utf8')
+        assert type(source) is str
+        assert type(name) is str
         source_file = self._hash_table.getFile(source)
         source_code = compile(source, source_file, 'exec')
-        exec(source_code, self.__dict__)
+        exec(source_code, self.asDict)
         return self.__dict__[name]
 
 class KeyModule(object):
@@ -285,6 +328,7 @@ class KeyRoot:
         self.key_to_module = {}
         self.hash_table = hash_table
 
+    @property
     def asModule(self):
         return KeyModule(self)
 
@@ -303,7 +347,7 @@ class KeyRoot:
 h = HashTable()
 
 k = KeyRoot(h)
-m = k.asModule()
+m = k.asModule
 m.a = public_key
 assert m.a.__name__ == 'a', m.a.__name__
 assert m.a.__key__ == public_key, m.a.__key__
@@ -380,9 +424,3 @@ assert m.a.using_dependency() == 2
     
 
 from pickle import loads, dumps
-
-
-
-
-
-        

@@ -1,0 +1,3 @@
+@signed
+def using_dependency():
+    return dependency() + 1

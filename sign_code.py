@@ -179,11 +179,30 @@ public_key = private_key.publickey()
 signature = hashToSignatureBytes(b'12345', private_key)
 assert verifyHashSignatureBytes(b'12345', signature, public_key)
 
+class SubModuleDict(dict):
+
+    def __init__(self, sub_module):
+        dict.__init__(self)
+        self.sub_module = sub_module
+        
+
+    def __getitem__(self, name):
+        try:
+            return dict.__getitem__(self, name, value)
+        except KeyError:
+            self.sub_module.require(name)
+            return self[name]
+
 class SubModule(types.ModuleType):
 
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
 
+    @property
+    def __dict__(self):
+        return self.__dict
+
     def __init__(self, name, key, hash_table):
+        self.__dict = SubModuleDict(self)
         types.ModuleType.__init__(self, name)
         self._hash_table = hash_table
         self.__key__ = key
@@ -196,11 +215,11 @@ class SubModule(types.ModuleType):
         return obj
 
     def __getattribute__(self, name):
-        if name.startswith('_') or name in self.__dict__ or \
-           name in ('require', 'signed', 'execute'):
+        if name.startswith('_'):
             return types.ModuleType.__getattribute__(self, name)
-        self.require(name)
-        return getattr(self, name)
+        if name in self.__dict__:
+            return self.__dict__[name]
+        raise AttributeError('%r has no attribute %r' % (self, name))
 
     def require(self, name):
         attacker = []
@@ -348,6 +367,17 @@ except ValueError:
 else:
     assert False, 'There should be an error'
 
+
+@signed
+def dependency():
+    return 1
+
+@signed
+def using_dependency():
+    return dependency() + 1
+
+assert m.a.using_dependency() == 2
+    
 
 from pickle import loads, dumps
 

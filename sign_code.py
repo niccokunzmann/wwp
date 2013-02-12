@@ -1,17 +1,4 @@
 
-
-def sign_code(code, private_key):
-    if hasattr(code, 'encode'):
-        code = code.encode('utf8')
-    assert type(code) is bytes, 'can only sign bytes'
-    assert private_key.can_sign(), 'the key must be able to sign the code'
-    (signature,) = private_key.sign()
-    return code + ''
-    
-def is_signed(signed_code, public_key):
-    pass
-
-
 def splitStringByLength(string, length):
     return [string[length * index: length * index + length]
             for index in range((len(string) - 1) // length + 1)]
@@ -34,19 +21,19 @@ class _BaseHashTable(object):
     def __init__(self):
         self.hash_to_object = {}
 
-    def _includes(self, hash):
+    def includes(self, hash):
         return hash in self.hash_to_object
 
-    def _store(self, source):
+    def store(self, source):
         'store one object and return the hash'
         hash = self.hash(source)
         self.hash_to_object[hash] = source
         return hash
 
-    def _get(self, hash):
+    def get(self, hash):
         return self.hash_to_object[hash]
 
-    def _find(self, *hashes):
+    def find(self, *hashes):
         'find the hashes in the hastable and return a list of findings'
         length = None
         for hash in hashes:
@@ -67,6 +54,12 @@ class _BaseHashTable(object):
             else:
                 results.append(value_hash)
         return results
+    
+    def print(self):
+        for x, y in self.hash_to_object.items():
+            print(x)
+            print(y)
+            print()
 
 import os
 import base64
@@ -82,33 +75,44 @@ class FileCachingHashTable(_BaseHashTable):
         assert type(hash) is bytes, hash
         return os.path.join(self.directory, base64.b16encode(hash))
     
-    def _store(self, source):
+    def store(self, source):
         # todo: faster
-        hash = _BaseHashTable._store(self, source)
+        hash = _BaseHashTable.store(self, source)
         path =  self._getFilePath(hash)
         if not os.path.isfile(path):
             open(path, 'wb').write(source)
         return hash
 
-    def _get(self, hash):
+    def get(self, hash):
         try:
-            return _BaseHashTable._get(self, hash)
+            return _BaseHashTable.get(self, hash)
         except KeyError:
             path = self._getFilePath(hash)
             if os.path.isfile(path):
-                _BaseHashTable._store(self, open(path, 'rb').read())
-            return _BaseHashTable._get(self, hash)
-
-    # official interface
+                _BaseHashTable.store(self, open(path, 'rb').read())
+            return _BaseHashTable.get(self, hash)
 
     def getFile(self, source):
-        return os.path.join(self._getFilePath(self._store(source)))
+        return self._getFilePath(self.store(source))
+
 
 
 from functools import partial
 
-class HashTable(FileCachingHashTable):
+class HashTable:
     '''enhances the interface for objects'''
+
+    def __init__(self):
+        self.ht = FileCachingHashTable()
+        self._store = self.ht.store
+        self._find = self.ht.find
+        self.print = self.ht.print
+        self._hash = self.ht.hash
+        self._get = self.ht.get
+        self._getFile = self.ht.getFile
+
+    def hash(self, source):
+        return self._hash(self.make_source(source))
 
     def store(self, *sources):
         assert len(sources) > 0
@@ -137,14 +141,11 @@ class HashTable(FileCachingHashTable):
         assert type(source) is bytes, 'Expected bytes, got %r' % source
         return source
 
-    def print(self):
-        for x, y in self.hash_to_object.items():
-            print(x)
-            print(y)
-            print()
 
     def getFile(self, source):
-        return FileCachingHashTable.getFile(self, self.make_source(source))
+        return self._getFile(self.make_source(source))
+
+
 
 h = HashTable()
 
@@ -220,44 +221,64 @@ class VerificationException(SecurityException):
 class SourceCodeVerificationException(VerificationException):
     pass
 
+class ImmutableStateException(SecurityException):
+    pass
 
 class SubModule(types.ModuleType):
 
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
 
+    __frozen = False
+
     def __init__(self, name, key, hash_table):
-        self.__dict = SubModuleDict(self)
         types.ModuleType.__init__(self, name)
+        self.__dict = SubModuleDict(self)
         self._hash_table = hash_table
         self.__key__ = key
-        self.__exported_key__ = key.exportKey()
+        self.__exported_key__ = key.publickey().exportKey()
         self.require = self.require
         self.signed = self.signed
-
+        self._executedCode = []
+        self.__frozen = True
+        
     @property
     def asDict(self):
         return self.__dict
 
-    def signed(self, obj):
+    # todo: move many methods to signer
+
+    def signed(self, obj, name = None):
         '''this is kind of an assertion'''
         local_source = inspect.getsource(obj)
         if local_source == '':
             raise ValueError('could not find source of %r' % obj)
-        name = obj.__name__
+        if name is None:
+            name = obj.__name__
         for source, name in self.yieldVerifiedSourcesOfName(name):
+            print('source', source, name)
             if source == local_source:
                 return obj
         raise SourceCodeVerificationException('Source of %r is not trusted' % \
                                               obj)
 
-
     def __getattribute__(self, name):
         if name.startswith('_') or name in self.__dict__ or \
-           name in ('require', 'signed', 'execute',  
-                    'yieldVerifiedSourcesOfName', 'asDict'):
+           hasattr(self.__class__, name):
             return types.ModuleType.__getattribute__(self, name)
         self.require(name)
         return getattr(self, name)
+
+    def __setattr__(self, name, obj):
+        if not self.__frozen:
+            return types.ModuleType.__setattr__(self, name, obj)
+        if name in self.__dict__:
+            raise ImmutableStateException('tried to modify immutable attribute'
+                                          ' %r of %r' % (name, self))
+        if self.__key__.has_private():
+            # this should ask can_sign() but impossible to use here
+            Signer([self.__key__], self._hash_table).sign(obj, name)
+        self.signed(obj, name)
+        types.ModuleType.__setattr__(self, name, obj)
 
     def yieldVerifiedSourcesOfName(self, name):
         attacker = []
@@ -267,6 +288,7 @@ class SubModule(types.ModuleType):
         for public_key, signature, source, name in results:
             assert self.__exported_key__ == public_key, "%r == %r" % \
                    (self.__exported_key__, public_key)
+            # todo: assertion for name
             hash = self._hash_table.store(source, name)
             if verifyHashSignatureBytes(hash, signature, self.__key__):
                 yield source.decode('utf8'), name.decode('utf8')
@@ -279,7 +301,6 @@ class SubModule(types.ModuleType):
         raise AttributeError('Could not find attribute %r in the tables. ' % name + \
                              "\n".join(attacker))
         
-
     def require(self, name, reload = False):
         if not reload and name in self.__dict__:
             return getattr(self, name)
@@ -291,6 +312,7 @@ class SubModule(types.ModuleType):
         assert type(name) is str
         source_file = self._hash_table.getFile(source)
         source_code = compile(source, source_file, 'exec')
+        self._executedCode.append(self._hash_table.hash(source))
         exec(source_code, self.asDict)
         return self.__dict__[name]
 
@@ -372,8 +394,12 @@ class Signer:
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
 
     def __call__(self, obj):
+        return self.sign(obj)
+
+    def sign(self, obj, name = None):
         source = self.getSource(obj)
-        name = obj.__name__
+        if name is None:
+            name = obj.__name__
         self.store_source_with_name(source.encode('utf8'), name.encode('utf8'))
         return obj
 
@@ -425,5 +451,32 @@ def using_dependency():
 assert m.a.using_dependency() == 2
 assert m.a.using_dependency.__globals__ == m.a.asDict
     
+m.a_private = private_key
+
+def test_acccess():
+    pass
+
+m.a_private.x = test_acccess
+try:
+    m.a_private.x = test_acccess
+except ImmutableStateException:
+    pass
+else:
+    assert False
+
+try:
+    m.a.v = test_acccess
+except AttributeError:
+    pass
+else:
+    assert False, 'set attibute of publickey'
+
+try:
+    m.a.x = test_acccess
+except ():
+    pass
+else:
+    assert False, 'can not set attribute to wrongly scoped object'
+
 
 from pickle import loads, dumps

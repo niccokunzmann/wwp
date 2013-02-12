@@ -238,7 +238,6 @@ class SubModule(types.ModuleType):
         self.__exported_key__ = key.publickey().exportKey()
         self.require = self.require
         self.signed = self.signed
-        self._executedCode = []
         self.__frozen = True
         
     @property
@@ -255,7 +254,6 @@ class SubModule(types.ModuleType):
         if name is None:
             name = obj.__name__
         for source, name in self.yieldVerifiedSourcesOfName(name):
-            print('source', source, name)
             if source == local_source:
                 return obj
         raise SourceCodeVerificationException('Source of %r is not trusted' % \
@@ -277,8 +275,15 @@ class SubModule(types.ModuleType):
         if self.__key__.has_private():
             # this should ask can_sign() but impossible to use here
             Signer([self.__key__], self._hash_table).sign(obj, name)
-        self.signed(obj, name)
+            if hasattr(obj, '__globals__') and obj.__globals__ != self.asDict:
+                self.require(name)
+        else:
+            self.signed(obj, name)
+            if hasattr(obj, '__globals__') and obj.__globals__ != self.asDict:
+                raise LookupError('this object is not scoped correctly.'
+                                  ' It should point to %s.asDict' % self)
         types.ModuleType.__setattr__(self, name, obj)
+        
 
     def yieldVerifiedSourcesOfName(self, name):
         attacker = []
@@ -312,7 +317,6 @@ class SubModule(types.ModuleType):
         assert type(name) is str
         source_file = self._hash_table.getFile(source)
         source_code = compile(source, source_file, 'exec')
-        self._executedCode.append(self._hash_table.hash(source))
         exec(source_code, self.asDict)
         return self.__dict__[name]
 
@@ -453,27 +457,27 @@ assert m.a.using_dependency.__globals__ == m.a.asDict
     
 m.a_private = private_key
 
-def test_acccess():
+def test_access():
     pass
 
-m.a_private.x = test_acccess
+m.a_private.test_access = test_access
 try:
-    m.a_private.x = test_acccess
+    m.a_private.test_access = test_access # wrong
 except ImmutableStateException:
     pass
 else:
     assert False
 
 try:
-    m.a.v = test_acccess
+    m.a.v = test_access
 except AttributeError:
     pass
 else:
     assert False, 'set attibute of publickey'
 
 try:
-    m.a.x = test_acccess
-except ():
+    m.a.test_access = test_access
+except LookupError:
     pass
 else:
     assert False, 'can not set attribute to wrongly scoped object'

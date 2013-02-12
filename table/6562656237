@@ -1,3 +1,0 @@
-@signed
-def g():
-    raise SomeError('')

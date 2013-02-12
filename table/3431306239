@@ -1,4 +1,0 @@
-@signed
-def f():
-    print('in f')
-    return '123'

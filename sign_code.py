@@ -207,6 +207,8 @@ class SubModuleDict(MutableMapping, dict):
     def __iter__(self):
         return iter(dir(self.sub_module))
 
+assert SubModuleDict.mro().index(dict) > SubModuleDict.mro().index(MutableMapping)
+
 import inspect
 
 class SecurityException(Exception):

@@ -423,6 +423,7 @@ def using_dependency():
     return dependency() + 1
 
 assert m.a.using_dependency() == 2
+assert m.a.using_dependency.__globals__ == m.a.asDict
     
 
 from pickle import loads, dumps

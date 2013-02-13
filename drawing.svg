@@ -91,15 +91,6 @@
     </filter>
     <filter
        inkscape:collect="always"
-       id="filter6735"
-       color-interpolation-filters="sRGB">
-      <feGaussianBlur
-         inkscape:collect="always"
-         stdDeviation="3.0114285"
-         id="feGaussianBlur6737" />
-    </filter>
-    <filter
-       inkscape:collect="always"
        id="filter6747"
        color-interpolation-filters="sRGB">
       <feGaussianBlur
@@ -115,9 +106,9 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="0.45254834"
-     inkscape:cx="658.22433"
-     inkscape:cy="519.72033"
+     inkscape:zoom="0.90509668"
+     inkscape:cx="442.05482"
+     inkscape:cy="7437.0889"
      inkscape:document-units="px"
      inkscape:current-layer="layer1"
      showgrid="false"
@@ -1567,18 +1558,24 @@
          y="5602.9326"
          x="-1051.8295"
          sodipodi:role="line"
-         id="tspan4805">   Smalltalk, pynet<tspan
+         id="tspan6146">   Smalltalk, pynet<tspan
    style="font-size:65.00091553%;baseline-shift:super"
-   id="tspan6192">[1] </tspan></tspan><tspan
+   id="tspan6192">[1] </tspan>, 6 wise men </tspan><tspan
          y="5642.9326"
          x="-1051.8295"
          sodipodi:role="line"
-         id="tspan6144" /><tspan
+         id="tspan6785">   around the elephant<tspan
+   style="font-size:65.00091553%;baseline-shift:super"
+   id="tspan6787">[2]</tspan>, </tspan><tspan
          y="5682.9326"
          x="-1051.8295"
          sodipodi:role="line"
-         id="tspan6146">   sources of sourcerers</tspan><tspan
+         id="tspan6777" /><tspan
          y="5722.9326"
+         x="-1051.8295"
+         sodipodi:role="line"
+         id="tspan6779">   </tspan><tspan
+         y="5762.9326"
          x="-1051.8295"
          sodipodi:role="line"
          id="tspan4669"> </tspan></text>
@@ -3251,7 +3248,12 @@ TkSuQmCC
          id="tspan6196"
          x="-1012.8571"
          y="5808.0767"
-         style="font-size:11px">[1] https://github.com/niccokunzmann/pynet/blob/master/documentation/done/tools.rst</tspan></text>
+         style="font-size:11px">[1] https://github.com/niccokunzmann/pynet/blob/master/documentation/done/tools.rst</tspan><tspan
+         sodipodi:role="line"
+         x="-1012.8571"
+         y="5821.8267"
+         style="font-size:11px"
+         id="tspan6789">[2] http://www.submission.info/perspectives/more/traits/wisemenandelephant.html</tspan></text>
     <text
        xml:space="preserve"
        style="font-size:32px;font-style:normal;font-weight:normal;line-height:125%;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;font-family:Sans"

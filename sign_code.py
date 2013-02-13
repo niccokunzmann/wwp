@@ -458,7 +458,7 @@ assert m.a.using_dependency.__globals__ == m.a.asDict
 m.a_private = private_key
 
 def test_access():
-    pass
+    return 5
 
 m.a_private.test_access = test_access
 try:
@@ -482,5 +482,6 @@ except LookupError:
 else:
     assert False, 'can not set attribute to wrongly scoped object'
 
+assert m.a.test_access() == 5
 
 from pickle import loads, dumps

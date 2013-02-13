@@ -106,9 +106,9 @@
      borderopacity="1.0"
      inkscape:pageopacity="0.0"
      inkscape:pageshadow="2"
-     inkscape:zoom="0.90509668"
-     inkscape:cx="-58.342753"
-     inkscape:cy="7289.6161"
+     inkscape:zoom="0.45254834"
+     inkscape:cx="1311.7191"
+     inkscape:cy="38.919831"
      inkscape:document-units="px"
      inkscape:current-layer="layer1"
      showgrid="false"
@@ -3034,5 +3034,17 @@
        sodipodi:ry="44.285713"
        d="m 1025,11531.951 c 0,24.458 -19.8274,44.286 -44.28571,44.286 -24.45832,0 -44.28571,-19.828 -44.28571,-44.286 0,-24.458 19.82739,-44.286 44.28571,-44.286 24.45831,0 44.28571,19.828 44.28571,44.286 z"
        transform="matrix(2.7540957,0,0,2.7540957,-2590.7004,-19098.323)" />
+    <text
+       xml:space="preserve"
+       style="font-size:144px;font-style:normal;font-weight:normal;line-height:125%;letter-spacing:0px;word-spacing:0px;fill:#000000;fill-opacity:1;stroke:none;font-family:Sans"
+       x="406.5864"
+       y="13056.325"
+       id="text3548"
+       sodipodi:linespacing="125%"
+       transform="translate(-1051.8295,54.191691)"><tspan
+         sodipodi:role="line"
+         id="tspan3550"
+         x="406.5864"
+         y="13056.325">TODO: add who is interesten in this</tspan></text>
   </g>
 </svg>

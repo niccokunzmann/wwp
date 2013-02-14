@@ -194,7 +194,10 @@ class SubModuleDict(MutableMapping, dict):
         return hasattr(self.sub_module, name)
         
     def __getitem__(self, name):
-        return getattr(self.sub_module, name)
+        try:
+            return getattr(self.sub_module, name)
+        except AttributeError as e:
+            raise KeyError(*e.args)
 
     def __setitem__(self, name, value):
         return setattr(self.sub_module, name, value)
@@ -207,6 +210,9 @@ class SubModuleDict(MutableMapping, dict):
 
     def __iter__(self):
         return iter(dir(self.sub_module))
+
+    def __eq__(self, other):
+        return self is other
 
 assert SubModuleDict.mro().index(dict) > SubModuleDict.mro().index(MutableMapping)
 
@@ -237,12 +243,13 @@ class SubModule(types.ModuleType):
         self.__key__ = key
         self.__exported_key__ = key.publickey().exportKey()
         self.require = self.require
-        self.signed = self.signed
         self.__frozen = True
         
     @property
     def asDict(self):
         return self.__dict
+
+    asNamespace = asDict
 
     # todo: move many methods to signer
 
@@ -279,9 +286,12 @@ class SubModule(types.ModuleType):
                 self.require(name)
         else:
             self.signed(obj, name)
-            if hasattr(obj, '__globals__') and obj.__globals__ != self.asDict:
-                raise LookupError('this object is not scoped correctly.'
-                                  ' It should point to %s.asDict' % self)
+            if hasattr(obj, '__globals__'):
+                if obj.__globals__ != self.asDict:
+                    raise LookupError('this object is not scoped correctly.'
+                                      ' It should point to %s.asDict' % self)
+            else:
+                raise TypeError('I can not handle this type of object like %r' % obj)
         types.ModuleType.__setattr__(self, name, obj)
         
 
@@ -316,9 +326,17 @@ class SubModule(types.ModuleType):
         assert type(source) is str
         assert type(name) is str
         source_file = self._hash_table.getFile(source)
-        source_code = compile(source, source_file, 'exec')
+        try:
+            source_code = compile(source, source_file, 'exec')
+        except IndentationError:
+            source = 'if True:\n' + source
+            source_code = compile(source, source_file, 'exec')
         exec(source_code, self.asDict)
         return self.__dict__[name]
+
+    @property
+    def asContext(self):
+        return NamespaceIncluder(self)
 
 class KeyModule(object):
 
@@ -417,19 +435,24 @@ class Signer:
             self.hash_table.store(public_key, signature, source, name)
 
         
-signed = Signer([private_key], h)
-s2 = Signer([], h)
+m.a_private = private_key
 
-@signed
+assert m.a != m.a_private
+assert m.a.asDict != m.a_private.asDict
+
 def f():
     return '123'
+
+m.a_private.f = f
 
 assert m.a.f() == '123', m.a.f()
 
 
-@signed
+
 def g():
     raise ValueError('')
+
+m.a_private.g = g
 
 try:
     m.a.g()
@@ -443,19 +466,19 @@ except ValueError:
 else:
     assert False, 'There should be an error'
 
-
-@signed
 def dependency():
     return 1
 
-@signed
+
 def using_dependency():
     return dependency() + 1
+
+m.a_private.dependency = dependency
+m.a_private.using_dependency = using_dependency
 
 assert m.a.using_dependency() == 2
 assert m.a.using_dependency.__globals__ == m.a.asDict
     
-m.a_private = private_key
 
 def test_access():
     return 5
@@ -483,5 +506,56 @@ else:
     assert False, 'can not set attribute to wrongly scoped object'
 
 assert m.a.test_access() == 5
+
+try:
+    m.a.in_with
+except AttributeError:
+    pass
+else:
+    assert False, 'AttributeError if accessing module'
+
+try:
+    m.a.asDict['in_with']
+except KeyError:
+    pass
+else:
+    assert False, 'KeyError if accessing dict'
+
+try:
+    exec('in_with', m.a.asNamespace)
+except NameError:
+    pass
+else:
+    assert False, 'KeyError if accessing dict'
+   
+class NamespaceIncluder:
+    def __init__(self, sub_module):
+        self.sub_module = sub_module
+
+    def getLocals(self):
+        # 0 is here
+        # 1 is __enter__ and __exit__
+        # 2 is outside
+        frame = inspect.stack()[2][0]
+        return frame.f_locals.copy()
+
+    def __enter__(self):
+        self._locals = self.getLocals()
+
+    def __exit__(self, ty, error, tb):
+        oldLocals = self._locals
+        newlocals = self.getLocals()
+        dict = self.sub_module.asDict
+        if error is None:
+            for key, value in newlocals.items():
+                if key not in oldLocals or value != oldLocals[key]:
+                    dict[key] = value
+        
+
+with m.a_private.asContext:
+    def in_with():
+        return 'with'
+
+assert m.a.in_with() == 'with'
 
 from pickle import loads, dumps

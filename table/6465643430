@@ -1,3 +1,2 @@
-@signed
 def f():
     return '123'

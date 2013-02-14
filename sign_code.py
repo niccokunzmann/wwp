@@ -184,6 +184,7 @@ assert verifyHashSignatureBytes(b'12345', signature, public_key)
 from collections.abc import MutableMapping
 
 class SubModuleDict(MutableMapping, dict):
+    AccessError = KeyError
 
     __slots__ = ('sub_module',)
 
@@ -197,7 +198,7 @@ class SubModuleDict(MutableMapping, dict):
         try:
             return getattr(self.sub_module, name)
         except AttributeError as e:
-            raise KeyError(*e.args)
+            raise self.AccessError(*e.args)
 
     def __setitem__(self, name, value):
         return setattr(self.sub_module, name, value)
@@ -213,6 +214,9 @@ class SubModuleDict(MutableMapping, dict):
 
     def __eq__(self, other):
         return self is other
+
+class SubModuleNamespace(SubModuleDict):
+    AccessError = NameError
 
 assert SubModuleDict.mro().index(dict) > SubModuleDict.mro().index(MutableMapping)
 
@@ -239,6 +243,7 @@ class SubModule(types.ModuleType):
     def __init__(self, name, key, hash_table):
         types.ModuleType.__init__(self, name)
         self.__dict = SubModuleDict(self)
+        self.__namespace = SubModuleNamespace(self)
         self._hash_table = hash_table
         self.__key__ = key
         self.__exported_key__ = key.publickey().exportKey()
@@ -249,7 +254,9 @@ class SubModule(types.ModuleType):
     def asDict(self):
         return self.__dict
 
-    asNamespace = asDict
+    @property
+    def asNamespace(self):
+        return self.__namespace
 
     # todo: move many methods to signer
 
@@ -282,14 +289,14 @@ class SubModule(types.ModuleType):
         if self.__key__.has_private():
             # this should ask can_sign() but impossible to use here
             Signer([self.__key__], self._hash_table).sign(obj, name)
-            if hasattr(obj, '__globals__') and obj.__globals__ != self.asDict:
+            if hasattr(obj, '__globals__') and obj.__globals__ != self.asNamespace:
                 self.require(name)
         else:
             self.signed(obj, name)
             if hasattr(obj, '__globals__'):
-                if obj.__globals__ != self.asDict:
+                if obj.__globals__ != self.asNamespace:
                     raise LookupError('this object is not scoped correctly.'
-                                      ' It should point to %s.asDict' % self)
+                                      ' It should point to %s.asNamespce' % self)
             else:
                 raise TypeError('I can not handle this type of object like %r' % obj)
         types.ModuleType.__setattr__(self, name, obj)
@@ -329,9 +336,9 @@ class SubModule(types.ModuleType):
         try:
             source_code = compile(source, source_file, 'exec')
         except IndentationError:
-            source = 'if True:\n' + source
+            source = 'if 1:\n' + source
             source_code = compile(source, source_file, 'exec')
-        exec(source_code, self.asDict)
+        exec(source_code, self.asNamespace)
         return self.__dict__[name]
 
     @property
@@ -439,6 +446,7 @@ m.a_private = private_key
 
 assert m.a != m.a_private
 assert m.a.asDict != m.a_private.asDict
+assert m.a.asNamespace != m.a_private.asNamespace
 
 def f():
     return '123'
@@ -477,7 +485,7 @@ m.a_private.dependency = dependency
 m.a_private.using_dependency = using_dependency
 
 assert m.a.using_dependency() == 2
-assert m.a.using_dependency.__globals__ == m.a.asDict
+assert m.a.using_dependency.__globals__ == m.a.asNamespace
     
 
 def test_access():
@@ -523,10 +531,10 @@ else:
 
 try:
     exec('in_with', m.a.asNamespace)
-except NameError:
-    pass
+except NameError as e:
+    assert e.args == ("Could not find attribute 'in_with' in the tables. ",), e.args
 else:
-    assert False, 'KeyError if accessing dict'
+    assert False, 'NameError if accessing in exec'
    
 class NamespaceIncluder:
     def __init__(self, sub_module):

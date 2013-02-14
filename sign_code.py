@@ -183,7 +183,7 @@ assert verifyHashSignatureBytes(b'12345', signature, public_key)
 
 from collections.abc import MutableMapping
 
-class SubModuleDict(MutableMapping, dict):
+class SignedModuleDict(MutableMapping, dict):
     AccessError = KeyError
 
     __slots__ = ('sub_module',)
@@ -215,10 +215,10 @@ class SubModuleDict(MutableMapping, dict):
     def __eq__(self, other):
         return self is other
 
-class SubModuleNamespace(SubModuleDict):
+class SignedModuleNamespace(SignedModuleDict):
     AccessError = NameError
 
-assert SubModuleDict.mro().index(dict) > SubModuleDict.mro().index(MutableMapping)
+assert SignedModuleDict.mro().index(dict) > SignedModuleDict.mro().index(MutableMapping)
 
 import inspect
 
@@ -234,7 +234,7 @@ class SourceCodeVerificationException(VerificationException):
 class ImmutableStateException(SecurityException):
     pass
 
-class SubModule(types.ModuleType):
+class SignedModule(types.ModuleType):
 
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
 
@@ -242,12 +242,11 @@ class SubModule(types.ModuleType):
 
     def __init__(self, name, key, hash_table):
         types.ModuleType.__init__(self, name)
-        self.__dict = SubModuleDict(self)
-        self.__namespace = SubModuleNamespace(self)
+        self.__dict = SignedModuleDict(self)
+        self.__namespace = SignedModuleNamespace(self)
         self._hash_table = hash_table
         self.__key__ = key
         self.__exported_key__ = key.publickey().exportKey()
-        self.require = self.require
         self.__frozen = True
         
     @property
@@ -262,11 +261,15 @@ class SubModule(types.ModuleType):
 
     def signed(self, obj, name = None):
         '''this is kind of an assertion'''
+        if name is None:
+            name = obj.__name__
+        if obj.__module__ == __builtins__.__name__ and \
+           getattr(__builtins__, name, []) is obj:
+            return obj
         local_source = inspect.getsource(obj)
         if local_source == '':
             raise ValueError('could not find source of %r' % obj)
-        if name is None:
-            name = obj.__name__
+
         for source, name in self.yieldVerifiedSourcesOfName(name):
             if source == local_source:
                 return obj
@@ -365,17 +368,17 @@ class KeyModule(object):
         if name.startswith('_'):
             return object.__getattribute__(self, name)
         notFound = []
-        subModule = self._modules.get(name, notFound)
-        if subModule is notFound:
-            raise AttributeError('I could not find a submudule named {0}.'\
-                                 'Assign a key to {0} to get the '\
+        SignedModule = self._modules.get(name, notFound)
+        if SignedModule is notFound:
+            raise AttributeError('I could not find a SignedModule named {0}. '\
+                                 'Assign a key to {0} to create the '\
                                  'corresponding module.'.format(name))
-        return subModule
+        return SignedModule
 
 
 class KeyRoot:
 
-    newSubModule = SubModule
+    newSignedModule = SignedModule
     
     def __init__(self, hash_table):
         self.key_to_module = {}
@@ -393,7 +396,7 @@ class KeyRoot:
             name = index
         module = self.key_to_module.get(index, None)
         if module is None:
-            module = self.newSubModule(name, key, self.hash_table)
+            module = self.newSignedModule(name, key, self.hash_table)
             self.key_to_module[index] = module
         return module
 
@@ -401,10 +404,10 @@ h = HashTable()
 
 k = KeyRoot(h)
 m = k.asModule
-m.a = public_key
-assert m.a.__name__ == 'a', m.a.__name__
-assert m.a.__key__ == public_key, m.a.__key__
-assert m.a == m.a
+m.a_public = public_key
+assert m.a_public.__name__ == 'a_public', m.a_public.__name__
+assert m.a_public.__key__ == public_key, m.a_public.__key__
+assert m.a_public == m.a_public
 
 import inspect
 
@@ -444,16 +447,16 @@ class Signer:
         
 m.a_private = private_key
 
-assert m.a != m.a_private
-assert m.a.asDict != m.a_private.asDict
-assert m.a.asNamespace != m.a_private.asNamespace
+assert m.a_public != m.a_private
+assert m.a_public.asDict != m.a_private.asDict
+assert m.a_public.asNamespace != m.a_private.asNamespace
 
 def f():
     return '123'
 
 m.a_private.f = f
 
-assert m.a.f() == '123', m.a.f()
+assert m.a_public.f() == '123', m.a_public.f()
 
 
 
@@ -462,8 +465,9 @@ def g():
 
 m.a_private.g = g
 
+# todo: raise if different stuff added twice
 try:
-    m.a.g()
+    m.a_public.g()
 except ValueError:
     import traceback
     import io
@@ -484,8 +488,8 @@ def using_dependency():
 m.a_private.dependency = dependency
 m.a_private.using_dependency = using_dependency
 
-assert m.a.using_dependency() == 2
-assert m.a.using_dependency.__globals__ == m.a.asNamespace
+assert m.a_public.using_dependency() == 2
+assert m.a_public.using_dependency.__globals__ == m.a_public.asNamespace
     
 
 def test_access():
@@ -494,47 +498,42 @@ def test_access():
 m.a_private.test_access = test_access
 try:
     m.a_private.test_access = test_access # wrong
+    assert False
 except ImmutableStateException:
     pass
-else:
-    assert False
 
 try:
-    m.a.v = test_access
+    m.a_public.v = test_access
+    assert False, 'set attibute of publickey'
 except AttributeError:
     pass
-else:
-    assert False, 'set attibute of publickey'
 
 try:
-    m.a.test_access = test_access
+    m.a_public.test_access = test_access
+    assert False, 'can not set attribute to wrongly scoped object'
 except LookupError:
     pass
-else:
-    assert False, 'can not set attribute to wrongly scoped object'
 
-assert m.a.test_access() == 5
+assert m.a_public.test_access() == 5
 
 try:
-    m.a.in_with
+    m.a_public.in_with
+    assert False, 'AttributeError if accessing module'
 except AttributeError:
     pass
-else:
-    assert False, 'AttributeError if accessing module'
 
 try:
-    m.a.asDict['in_with']
+    m.a_public.asDict['in_with']
+    assert False, 'KeyError if accessing dict'
 except KeyError:
     pass
-else:
-    assert False, 'KeyError if accessing dict'
 
 try:
-    exec('in_with', m.a.asNamespace)
+    exec('in_with', m.a_public.asNamespace)
+    assert False, 'NameError if accessing in exec'
 except NameError as e:
     assert e.args == ("Could not find attribute 'in_with' in the tables. ",), e.args
-else:
-    assert False, 'NameError if accessing in exec'
+    
    
 class NamespaceIncluder:
     def __init__(self, sub_module):
@@ -559,11 +558,48 @@ class NamespaceIncluder:
                 if key not in oldLocals or value != oldLocals[key]:
                     dict[key] = value
         
+def not_in_with():
+    return None
 
 with m.a_private.asContext:
     def in_with():
         return 'with'
 
-assert m.a.in_with() == 'with'
+assert m.a_public.in_with() == 'with'
+assert m.a_private.in_with() == 'with'
 
-from pickle import loads, dumps
+assert not hasattr(m.a_public, 'not_in_with')
+
+# TODO
+# add signed classes
+# adding a class means trusting all superclasses, their modules and imported modules
+# TODO: add module import support for keys,
+# TODO: import module should be possible in SignedModule
+# TODO: !!!!!!!!! load functions with with m.a_private.asContext:
+#                 sign every other function relative to its module !!!!!!!!!
+# todo: remove this test and sign things when serializer is ready
+assert m.a_public.signed(object, 'object'), 'built in objects must be trusted'
+try:
+    m.a_public.signed(object, 'asdas')
+    assert False, 'wrong names for builtin objects not good'
+except TypeError:
+    pass
+
+##from Crypto.PublicKey import RSA
+##from Crypto import Random
+##rng = Random.new().read
+##RSAkey = RSA.generate(1024, rng) 
+
+untrusted_key = Crypto.PublicKey.RSA.importKey(b'-----BEGIN RSA PRIVATE KEY-----\nMIICWwIBAAKBgQCmPu3/VDfsB4omSF1p3afqD+gCKBoiQsThSw34gm78mKpVvmwB\nUh640+jL8tZhi4Dd3xunRFSG2KsGs4rcueWNiM/jwlA2sYDQ45qWWBvnumvQGwSn\nkuw1KQ3Ey/A33zA8oWVwBBGJg9WENrLke4jCS8iCWWLPNj1/CKIm050c1QIDAQAB\nAoGAIitBA3+t1sdd76xj9sRmJMeMKhVP+ca7bIrenjtA0I4YRHNVA5h7VAXKDVEm\nGvpvTCr1JhX3QZf63u+8FM3oji/H5GNiihQ3YsYFlh/ZHnoE73YrxrVb9ROcakRq\nXBRRLmnLeLW+Ok6IQ3kKyL7w0+kSqgGNnoiUkEbY93bExYECQQDMZcgx90ezO73l\nSI8WjDcoPToCOTYzTybiMrxpmJJJ1Y3m7BuZXGDQedynWJFIYO3PvACV8DNs71Uz\nNOPrS4tRAkEA0DdmCjqmQ9bJh9XOvtHlzUyf2DEHJp+OYUhQoEmS1Nh7qXKN50mz\n4Vb6qfSJhZu1ILyqIFoqjLInCDka7POQRQJAGJEfN8o15vgGQfmvoREnTAHX6A6C\nUjZwQP3CIZsB8jflv1yfkJZG2Kfc+owtohpsWuyI0Xy2YaB+iBISVuSUkQJAVsaP\nxzmUK3ere+n2hP5TSJFjmKUuNsGOhCqwN20SPZSPTRpJ25eS2Rn307bvTXiMLz2R\npXQOgZ6Jt9qcxx3nBQJAQfpNKDZRDsEtKQlmHafkFFmViBqgi9+9kJp7VmnWgxdT\niP+7yCmdVQmUZ7JPSubluqy/aj4QK2y4CQ+t8yuD1w==\n-----END RSA PRIVATE KEY-----')
+untrusted_public_key = untrusted_key.publickey()
+m.u_private = untrusted_key
+m.u_public = untrusted_public_key
+
+
+
+
+# TODO
+# add imports: 
+# m.a_private.trust(key_or_module)
+# m.a_private.attribute = m.a_private.trust(key)
+

@@ -387,7 +387,7 @@ class SignedModule(types.ModuleType):
         try:
             source_code = compile(source, source_file, 'exec')
         except IndentationError:
-            source = 'if 1:\n' + source[:-1]
+            source = 'if 1:\n' + source
             source_code = compile(source, source_file, 'exec')
         exec(source_code, self.asNamespace)
         return self.__dict__[name]
@@ -658,6 +658,9 @@ AllSignedModules()
 import AllSignedModules
 
 with m.pickler.asContext:
+##    adding classes is very difficult
+##    the lookup for the code goes through the module loader
+##    but the code lookup of functions goes through the func_code.co_filename
     class Class:
         pass
 

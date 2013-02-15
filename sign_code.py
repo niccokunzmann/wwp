@@ -387,7 +387,7 @@ class SignedModule(types.ModuleType):
         try:
             source_code = compile(source, source_file, 'exec')
         except IndentationError:
-            source = 'if 1:\n' + source
+            source = 'if 1:\n' + source[1:]
             source_code = compile(source, source_file, 'exec')
         exec(source_code, self.asNamespace)
         return self.__dict__[name]

@@ -184,11 +184,11 @@ assert verifyHashSignatureBytes(b'12345', signature, public_key)
 from collections.abc import MutableMapping
 
 class SignedModuleDict(MutableMapping, dict):
-    AccessError = KeyError
 
     __slots__ = ('sub_module',)
 
     def __init__(self, sub_module):
+        dict.__init__(self, __name__ = sub_module.__name__)
         self.sub_module = sub_module
 
     def __contains__(self, name):
@@ -198,7 +198,7 @@ class SignedModuleDict(MutableMapping, dict):
         try:
             return getattr(self.sub_module, name)
         except AttributeError as e:
-            raise self.AccessError(*e.args)
+            raise KeyError(*e.args)
 
     def __setitem__(self, name, value):
         return setattr(self.sub_module, name, value)
@@ -216,7 +216,14 @@ class SignedModuleDict(MutableMapping, dict):
         return self is other
 
 class SignedModuleNamespace(SignedModuleDict):
-    AccessError = NameError
+    def __getitem__(self, name):
+        try:
+            return getattr(self.sub_module, name)
+        except AttributeError as e:
+            if name in self.sub_module.__builtins__:
+                return self.sub_module.__builtins__[name]
+            raise NameError(*e.args)
+
 
 assert SignedModuleDict.mro().index(dict) > SignedModuleDict.mro().index(MutableMapping)
 
@@ -234,19 +241,49 @@ class SourceCodeVerificationException(VerificationException):
 class ImmutableStateException(SecurityException):
     pass
 
+class SignedModuleLoader:
+
+    def __init__(self, sub_module):
+        self.sub_module = sub_module
+        self.source = '\n'
+
+    def add_source(self, new_source):
+        length = self.source.count('\n')
+        self.source += new_source + '\n'
+        return '\n' * length + new_source
+
+    def get_source(self, *args):
+        return self.source
+
+
+def getModuleName(key, hash_table):
+    s = str(base64.b32encode(hash_table.hash(key.publickey().exportKey())), 'utf8')
+    if key.has_private():
+        s += 'private'
+    return s
+
+import sys
+
 class SignedModule(types.ModuleType):
+
+    # refactor this class to have asModule, asContext, asNamespace
 
     hashToSignatureBytes = staticmethod(hashToSignatureBytes)
 
     __frozen = False
 
     def __init__(self, name, key, hash_table):
-        types.ModuleType.__init__(self, name)
+        types.ModuleType.__init__(self, getModuleName(key, hash_table))
+        sys.modules[self.__name__] = self
         self.__dict = SignedModuleDict(self)
         self.__namespace = SignedModuleNamespace(self)
         self._hash_table = hash_table
         self.__key__ = key
         self.__exported_key__ = key.publickey().exportKey()
+        self.__builtins__ = os.__builtins__
+        self.__loader__ = SignedModuleLoader(self)
+        self._addSource = self.__loader__.add_source
+        self.__file__ = 'a dummy file'
         self.__frozen = True
         
     @property
@@ -292,8 +329,15 @@ class SignedModule(types.ModuleType):
         if self.__key__.has_private():
             # this should ask can_sign() but impossible to use here
             Signer([self.__key__], self._hash_table).sign(obj, name)
-            if hasattr(obj, '__globals__') and obj.__globals__ != self.asNamespace:
-                self.require(name)
+            if type(obj) is types.FunctionType:
+                if obj.__globals__ != self.asNamespace:
+                    obj = self.require(name)
+            elif type(obj) is type:
+                if obj.__module__ != self.__name__:
+                    obj = self.require(name)
+            else:
+                raise TypeError('I can only contain functions or classes, '\
+                                'not %r' % (obj,))
         else:
             self.signed(obj, name)
             if hasattr(obj, '__globals__'):
@@ -302,6 +346,9 @@ class SignedModule(types.ModuleType):
                                       ' It should point to %s.asNamespce' % self)
             else:
                 raise TypeError('I can not handle this type of object like %r' % obj)
+        if type(obj) not in (types.FunctionType, type):
+            raise TypeError('I can only contain functions or classes, not %r'\
+                            % (obj,))
         types.ModuleType.__setattr__(self, name, obj)
         
 
@@ -335,11 +382,12 @@ class SignedModule(types.ModuleType):
     def execute(self, source, name):
         assert type(source) is str
         assert type(name) is str
+        source = self._addSource(source)
         source_file = self._hash_table.getFile(source)
         try:
             source_code = compile(source, source_file, 'exec')
         except IndentationError:
-            source = 'if 1:\n' + source
+            source = 'if 1:\n' + source[:-1]
             source_code = compile(source, source_file, 'exec')
         exec(source_code, self.asNamespace)
         return self.__dict__[name]
@@ -405,7 +453,7 @@ h = HashTable()
 k = KeyRoot(h)
 m = k.asModule
 m.a_public = public_key
-assert m.a_public.__name__ == 'a_public', m.a_public.__name__
+assert m.a_public.__name__ == getModuleName(public_key, h), m.a_public.__name__
 assert m.a_public.__key__ == public_key, m.a_public.__key__
 assert m.a_public == m.a_public
 
@@ -457,7 +505,7 @@ def f():
 m.a_private.f = f
 
 assert m.a_public.f() == '123', m.a_public.f()
-
+assert m.a_private.f is not f
 
 
 def g():
@@ -468,6 +516,7 @@ m.a_private.g = g
 # todo: raise if different stuff added twice
 try:
     m.a_public.g()
+    assert False, 'There should be an error'
 except ValueError:
     import traceback
     import io
@@ -475,8 +524,6 @@ except ValueError:
     traceback.print_exc(file = s)
     s = s.getvalue()
     assert "raise ValueError('')" in s, s
-else:
-    assert False, 'There should be an error'
 
 def dependency():
     return 1
@@ -589,17 +636,30 @@ except TypeError:
 ##from Crypto import Random
 ##rng = Random.new().read
 ##RSAkey = RSA.generate(1024, rng) 
-
-untrusted_key = Crypto.PublicKey.RSA.importKey(b'-----BEGIN RSA PRIVATE KEY-----\nMIICWwIBAAKBgQCmPu3/VDfsB4omSF1p3afqD+gCKBoiQsThSw34gm78mKpVvmwB\nUh640+jL8tZhi4Dd3xunRFSG2KsGs4rcueWNiM/jwlA2sYDQ45qWWBvnumvQGwSn\nkuw1KQ3Ey/A33zA8oWVwBBGJg9WENrLke4jCS8iCWWLPNj1/CKIm050c1QIDAQAB\nAoGAIitBA3+t1sdd76xj9sRmJMeMKhVP+ca7bIrenjtA0I4YRHNVA5h7VAXKDVEm\nGvpvTCr1JhX3QZf63u+8FM3oji/H5GNiihQ3YsYFlh/ZHnoE73YrxrVb9ROcakRq\nXBRRLmnLeLW+Ok6IQ3kKyL7w0+kSqgGNnoiUkEbY93bExYECQQDMZcgx90ezO73l\nSI8WjDcoPToCOTYzTybiMrxpmJJJ1Y3m7BuZXGDQedynWJFIYO3PvACV8DNs71Uz\nNOPrS4tRAkEA0DdmCjqmQ9bJh9XOvtHlzUyf2DEHJp+OYUhQoEmS1Nh7qXKN50mz\n4Vb6qfSJhZu1ILyqIFoqjLInCDka7POQRQJAGJEfN8o15vgGQfmvoREnTAHX6A6C\nUjZwQP3CIZsB8jflv1yfkJZG2Kfc+owtohpsWuyI0Xy2YaB+iBISVuSUkQJAVsaP\nxzmUK3ere+n2hP5TSJFjmKUuNsGOhCqwN20SPZSPTRpJ25eS2Rn307bvTXiMLz2R\npXQOgZ6Jt9qcxx3nBQJAQfpNKDZRDsEtKQlmHafkFFmViBqgi9+9kJp7VmnWgxdT\niP+7yCmdVQmUZ7JPSubluqy/aj4QK2y4CQ+t8yuD1w==\n-----END RSA PRIVATE KEY-----')
-untrusted_public_key = untrusted_key.publickey()
-m.u_private = untrusted_key
-m.u_public = untrusted_public_key
-
-
-
+##
 
 # TODO
 # add imports: 
 # m.a_private.trust(key_or_module)
 # m.a_private.attribute = m.a_private.trust(key)
+
+pickler_key = Crypto.PublicKey.RSA.importKey(b'-----BEGIN RSA PRIVATE KEY-----\nMIICWwIBAAKBgQCmPu3/VDfsB4omSF1p3afqD+gCKBoiQsThSw34gm78mKpVvmwB\nUh640+jL8tZhi4Dd3xunRFSG2KsGs4rcueWNiM/jwlA2sYDQ45qWWBvnumvQGwSn\nkuw1KQ3Ey/A33zA8oWVwBBGJg9WENrLke4jCS8iCWWLPNj1/CKIm050c1QIDAQAB\nAoGAIitBA3+t1sdd76xj9sRmJMeMKhVP+ca7bIrenjtA0I4YRHNVA5h7VAXKDVEm\nGvpvTCr1JhX3QZf63u+8FM3oji/H5GNiihQ3YsYFlh/ZHnoE73YrxrVb9ROcakRq\nXBRRLmnLeLW+Ok6IQ3kKyL7w0+kSqgGNnoiUkEbY93bExYECQQDMZcgx90ezO73l\nSI8WjDcoPToCOTYzTybiMrxpmJJJ1Y3m7BuZXGDQedynWJFIYO3PvACV8DNs71Uz\nNOPrS4tRAkEA0DdmCjqmQ9bJh9XOvtHlzUyf2DEHJp+OYUhQoEmS1Nh7qXKN50mz\n4Vb6qfSJhZu1ILyqIFoqjLInCDka7POQRQJAGJEfN8o15vgGQfmvoREnTAHX6A6C\nUjZwQP3CIZsB8jflv1yfkJZG2Kfc+owtohpsWuyI0Xy2YaB+iBISVuSUkQJAVsaP\nxzmUK3ere+n2hP5TSJFjmKUuNsGOhCqwN20SPZSPTRpJ25eS2Rn307bvTXiMLz2R\npXQOgZ6Jt9qcxx3nBQJAQfpNKDZRDsEtKQlmHafkFFmViBqgi9+9kJp7VmnWgxdT\niP+7yCmdVQmUZ7JPSubluqy/aj4QK2y4CQ+t8yuD1w==\n-----END RSA PRIVATE KEY-----')
+pickler_public_key = pickler_key.publickey()
+m.pickler = pickler_key
+m.pickler_public = pickler_public_key
+
+class AllSignedModules:
+    def __init__(self):
+        self.__name__ = self.__class__.__name__
+        import sys
+        sys.modules[self.__name__] = self
+
+AllSignedModules()
+import AllSignedModules
+
+with m.pickler.asContext:
+    class Class:
+        pass
+
+assert m.pickler.Class is not Class
 

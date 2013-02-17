@@ -49,6 +49,7 @@ def getCallerRoles():
         return {}
     frame = stack[0][0]
 ##    print('module', frame.f_globals['__name__'])
+    # todo: dispatch type and role
     roles = frame.f_globals.get('__roles__', {})
     return roles    
     

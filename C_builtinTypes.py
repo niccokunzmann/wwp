@@ -27,11 +27,13 @@ def test():
     # check for identity
     t = (3,)
     assert t.first == 3
-    l = []
+    l = list()
     l.append(3)
     assert l.first == 3
     assert l.first == 2 + 1
-    
+
+# todo: test converting function arguments
+# set code object of the function to locally created one
 
 if __name__ == '__main__':
 
